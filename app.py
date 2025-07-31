@@ -3,6 +3,8 @@ import json
 import os
 import random
 import streamlit.components.v1 as components
+from roue_component import roue_interactive
+import time
 
 FICHIER_LIVRES = "livres.json"
 
@@ -54,7 +56,7 @@ if "livre_tire" not in st.session_state:
 st.markdown("""
 <div style='text-align: center;'>
     <h1 style='font-size: 48px;'>🎡 Angie's reading wheel</h1>
-    <h2 style='font-size: 28px; margin-top: -10px;'>Quelle sera ta prochaine lecture ? 📖</h2>
+    <h2 style='font-size: 26px; margin-top: -10px;'>Quelle sera ta prochaine lecture ?</h2>
     <h3 style='font-size: 22px; margin-top: 50px;'>🎲 Tirage au sort</h3>
 </div>
 """, unsafe_allow_html=True)
@@ -69,104 +71,29 @@ with col2:
             st.warning("Aucun livre dans la roue 🥲")
 
 
-# Affichage de la roue intégrée directement dans le HTML
-components.html(f"""
-<!DOCTYPE html>
-<html lang="fr">
-<head>
-  <meta charset="UTF-8">
-  <title>Roue de lecture</title>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.11.0/gsap.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/gh/zarocknz/javascript-winwheel@master/Winwheel.min.js"></script>
-  <style>
-    body {{
-      margin: 0;
-      padding: 0;
-      background-color: transparent;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      height: 500px;
-    }}
-    canvas {{
-      display: block;
-      border: none;
-      outline: none;
-      background-color: transparent;
-    }}
-  </style>
-</head>
-<body>
-  <canvas id="canvas" width="500" height="500"></canvas>
 
-  <script>
-    let roue;
+# Affichage de la roue avec le nouveau composant
+if data["liste_tirage"]:
+    roue_interactive(
+        livres=data["liste_tirage"], 
+        lancer=st.session_state.get("lancer_roue", False),
+        height=600
+    )
+    
+    # Si la roue vient d'être lancée, faire le tirage immédiatement
+    if st.session_state.get("lancer_roue", False):
+        livre_tire = tirer_livre(data["liste_tirage"])
+        st.session_state.livre_tire = livre_tire
+        time.sleep(3.5)
 
-    function creerRoue(livres) {{
-      if (!livres || livres.length === 0) {{
-        console.warn("⚠️ Aucune liste de livres fournie !");
-        return;
-      }}
+else:
+    st.info("🎉 Aucun livre dans la roue actuellement.")
 
-      const couleurs = ['#e74c3c', '#f1c40f', '#2ecc71', '#3498db', '#9b59b6', '#e67e22', '#f39c12', '#8e44ad', '#2c3e50', '#16a085'];
-      const segments = livres.map((titre, i) => ({{
-        fillStyle: couleurs[i % couleurs.length],
-        text: titre,
-        textFillStyle: '#ffffff',
-        textFontSize: Math.max(12, Math.min(16, 200 / livres.length))
-      }}));
-
-      roue = new Winwheel({{
-        canvasId: 'canvas',
-        numSegments: segments.length,
-        segments: segments,
-        textAlignment: 'center',
-        textOrientation: 'horizontal',
-        textMargin: 0,
-        animation: {{
-          type: 'spinToStop',
-          duration: 4,
-          spins: 5 + Math.random() * 5,
-          callbackFinished: function (segment) {{
-            console.log("🎯 Livre sélectionné :", segment.text);
-            // Envoie le livre sélectionné à Streamlit via l'URL
-            const currentUrl = new URL(window.parent.location.href);
-            currentUrl.searchParams.set('livre', segment.text);
-            window.parent.location.href = currentUrl.toString();
-          }}
-        }}
-      }});
-    }}
-
-    // Initialisation avec les livres
-    const livres = {json.dumps(data["liste_tirage"])};
-    creerRoue(livres);
-
-    // Démarrer l'animation si demandé
-    const lancerRoue = {json.dumps(st.session_state.get("lancer_roue", False))};
-    if (lancerRoue && roue) {{
-      setTimeout(() => {{
-        roue.startAnimation();
-      }}, 100);
-    }}
-  </script>
-</body>
-</html>
-""", height=600)
-
-
-
-# Récupérer le résultat via l'URL
-livre_depuis_url = st.query_params.get("livre", None)
-if livre_depuis_url and livre_depuis_url != st.session_state.get("dernier_livre_traite"):
-    st.session_state.livre_tire = livre_depuis_url
-    st.session_state.dernier_livre_traite = livre_depuis_url
-    st.query_params.clear()  # Nettoyer l'URL
-    st.rerun()
 
 # Réinitialise la commande pour ne pas relancer en boucle
 if "lancer_roue" in st.session_state:
     st.session_state.lancer_roue = False
+
 
 # Afficher le livre tiré
 if st.session_state.livre_tire:
