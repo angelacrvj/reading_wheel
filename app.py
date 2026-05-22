@@ -129,7 +129,7 @@ def reinitialiser_liste(df):
     sauvegarder_livres(df)
 
 # ================ Initialisation de l'application Streamlit ================
-st.set_page_config(page_title="🎡 Angie's reading wheel", layout="centered")
+st.set_page_config(page_title="🎡 Angie's reading wheel", page_icon="icon.png", layout="centered")
 
 data = charger_livres()
 
