@@ -1,57 +1,167 @@
 import streamlit as st
-import json
-import os
+import pandas as pd
+import gspread
+from gspread_dataframe import set_with_dataframe
 import random
-import streamlit.components.v1 as components
 from roue_component import roue_interactive
 import time
 
-FICHIER_LIVRES = "livres.json"
 
+# ========================= Connexion Google Sheets =========================
+
+@st.cache_resource(show_spinner=False)
+def get_sheet():
+    gc = gspread.service_account_from_dict(
+        st.secrets["gcp_service_account"]
+    )
+
+    sheet_name = st.secrets["app"]["SHEET_NAME"]
+
+    return gc.open(sheet_name)
+
+
+def get_worksheet():
+    sh = get_sheet()
+
+    ws_name = st.secrets["app"]["WORKSHEET"]
+
+    try:
+        ws = sh.worksheet(ws_name)
+
+    except gspread.WorksheetNotFound:
+
+        ws = sh.add_worksheet(
+            title=ws_name,
+            rows=1000,
+            cols=10
+        )
+
+        ws.update(
+            "A1:F1",
+            [[
+                "Titre",
+                "Auteur",
+                "Lu ?",
+                "Prêté ?",
+                "étoiles",
+                "Information"
+            ]]
+        )
+
+    return ws
+
+
+@st.cache_data(ttl=15)
 def charger_livres():
-    if os.path.exists(FICHIER_LIVRES): 
-        with open(FICHIER_LIVRES, "r", encoding="utf-8") as f:  
-            return json.load(f)  
-    else:
-        return {"liste_tirage": [], "livres_supprimes": []}
 
-def sauvegarder_livres(data):
-    with open(FICHIER_LIVRES, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=4)
+    ws = get_worksheet()
+
+    records = ws.get_all_records()
+
+    colonnes = [
+        "Titre",
+        "Auteur",
+        "Lu ?",
+        "Prêté ?",
+        "étoiles",
+        "Information"
+    ]
+
+    if not records:
+        return pd.DataFrame(columns=colonnes)
+
+    df = pd.DataFrame(records)
+
+    for col in colonnes:
+        if col not in df.columns:
+            df[col] = ""
+
+    df = df[colonnes]
+
+    df["Titre"] = df["Titre"].astype(str).str.strip()
+
+    df["Auteur"] = df["Auteur"].astype(str).str.strip()
+
+    df["Lu ?"] = df["Lu ?"].astype(str).str.strip()
+
+    df["Lu ?"] = df["Lu ?"].replace("", "Non")
+
+    return df
+
+
+def sauvegarder_livres(df):
+
+    ws = get_worksheet()
+
+    ws.clear()
+
+    set_with_dataframe(
+        ws,
+        df,
+        include_index=False
+    )
+
+    st.cache_data.clear()
+
 
 def tirer_livre(liste):
+
     if not liste:
         return None
+
     return random.choice(liste)
 
-def ajouter_livre(data, nouveau_livre):
-    nouveau_livre = nouveau_livre.strip()
-    if nouveau_livre and nouveau_livre not in data["liste_tirage"] and nouveau_livre not in data["livres_supprimes"]:
-        data["liste_tirage"].append(nouveau_livre)
-        sauvegarder_livres(data)
-        return True
-    return False
 
-def supprimer_livre(data, livre):
-    if livre in data["liste_tirage"]:
-        data["liste_tirage"].remove(livre) 
-        data["livres_supprimes"].append(livre)  
-        sauvegarder_livres(data)
+def supprimer_livre(df, titre):
 
-def reinitialiser_liste(data):
-    data["liste_tirage"] += data["livres_supprimes"]
-    data["livres_supprimes"] = []
-    sauvegarder_livres(data)
+    df.loc[
+        df["Titre"] == titre,
+        "Lu ?"
+    ] = "Oui"
+
+    sauvegarder_livres(df)
+
+
+def reinitialiser_liste(df):
+
+    df["Lu ?"] = "Non"
+
+    sauvegarder_livres(df)
 
 # ================ Initialisation de l'application Streamlit ================
 st.set_page_config(page_title="🎡 Angie's reading wheel", layout="centered")
 
-# Charger les données depuis le JSON
 data = charger_livres()
+
+livres_a_lire = data[
+    data["Lu ?"] == "Non"
+]["Titre"].dropna().tolist()
+
+livres_lus = data[
+    data["Lu ?"] == "Oui"
+]["Titre"].dropna().tolist()
+
+livres_a_lire_details = data[
+    data["Lu ?"] == "Non"
+].apply(
+    lambda row: f"{row['Titre']} — {row['Auteur']}" if row["Auteur"] else row["Titre"],
+    axis=1
+).tolist()
+
+livres_lus_details = data[
+    data["Lu ?"] == "Oui"
+].apply(
+    lambda row: f"{row['Titre']} — {row['Auteur']}" if row["Auteur"] else row["Titre"],
+    axis=1
+).tolist()
 
 # Initialiser la mémoire temporaire pour le livre tiré
 if "livre_tire" not in st.session_state:
     st.session_state.livre_tire = None
+
+if "spin_id" not in st.session_state:
+    st.session_state.spin_id = 0
+
 
 st.markdown("""
 <div style='text-align: center;'>
@@ -65,24 +175,26 @@ col1, col2, col3 = st.columns([2, 1, 2])
 
 with col2:
     if st.button("Tirer un livre"):
-        if data["liste_tirage"]:
+        if livres_a_lire:
             st.session_state.lancer_roue = True
+            st.session_state.spin_id += 1
+
         else:
             st.warning("Aucun livre dans la roue 🥲")
 
 
-
 # Affichage de la roue avec le nouveau composant
-if data["liste_tirage"]:
+if livres_a_lire:
     roue_interactive(
-        livres=data["liste_tirage"], 
+        livres=livres_a_lire, 
         lancer=st.session_state.get("lancer_roue", False),
+        spin_id=st.session_state.spin_id,
         height=600
     )
-    
+
     # Si la roue vient d'être lancée, faire le tirage immédiatement
     if st.session_state.get("lancer_roue", False):
-        livre_tire = tirer_livre(data["liste_tirage"])
+        livre_tire = tirer_livre(livres_a_lire)
         st.session_state.livre_tire = livre_tire
         time.sleep(3.5)
 
@@ -111,31 +223,66 @@ if st.session_state.livre_tire:
             st.session_state.livre_tire = None
             st.rerun()
 
-st.markdown(f"<p style='text-align:center;'>Il reste {len(data['liste_tirage'])} livres dans la roue.</p>", unsafe_allow_html=True)
+st.markdown(f"<p style='text-align:center;'>Il reste {len(livres_a_lire)} livres dans la roue.</p>", unsafe_allow_html=True)
 
 st.markdown("<p style='font-size:18px;'>➕ Ajouter un nouveau livre</p>", unsafe_allow_html=True)
 
+
 with st.form("Ajouter un nouveau livre"):
-    nouveau_livre_form = st.text_input("Titre du livre à ajouter ✍️")
-    
+
+    nouveau_titre = st.text_input("Titre du livre ✍️")
+    nouvel_auteur = st.text_input("Auteur.ice ✍️")
+
     if st.form_submit_button("Ajouter ce livre"):
-        if ajouter_livre(data, nouveau_livre_form):
-            st.success(f"✅ Livre '{nouveau_livre_form}' ajouté à la liste.")
-            st.rerun()
-        else:
-            st.warning("⚠️ Impossible d'ajouter ce livre, déjà présent ou déjà tiré.")
+        nouveau_titre = nouveau_titre.strip()
+        nouvel_auteur = nouvel_auteur.strip()
+        titres_existants = (data["Titre"].astype(str).str.strip().tolist())
+        if nouveau_titre:
+            if nouveau_titre not in titres_existants:
+                nouvelle_ligne = {
+                    "Titre": nouveau_titre,
+                    "Auteur": nouvel_auteur,
+                    "Lu ?": "Non",
+                    "Prêté ?": "",
+                    "étoiles": "",
+                    "Information": ""
+                }
+
+                data = pd.concat([data, pd.DataFrame([nouvelle_ligne])], ignore_index=True)
+
+                sauvegarder_livres(data)
+
+                st.success(f"✅ Livre '{nouveau_titre}' ajouté.")
+                st.rerun()
+
+            else:
+                st.warning("⚠️ Impossible d'ajouter ce livre, déjà présent ou déjà tiré.")
+
 
 st.markdown("<p style='font-size:18px;'>🗑️ Supprimer un livre manuellement</p>", unsafe_allow_html=True)
 
-if data["liste_tirage"]:
+
+if livres_a_lire:
     with st.form("suppression_formulaire"):
-        livre_a_supprimer_form = st.selectbox("Choisis un livre à supprimer de la roue :", data["liste_tirage"])
+        livres_selectionnes = st.multiselect(
+            "Recherche un livre à supprimer de la roue :",
+            livres_a_lire,
+            max_selections=1
+        )
+
         supprimer = st.form_submit_button("Supprimer ce livre")
-        
+
         if supprimer:
-            supprimer_livre(data, livre_a_supprimer_form)
-            st.success(f"📤 Livre '{livre_a_supprimer_form}' supprimé de la roue.")
-            st.rerun()
+            if livres_selectionnes:
+                livre_selectionne = livres_selectionnes[0]
+
+                supprimer_livre(data, livre_selectionne)
+
+                st.success(f"📤 Livre '{livre_selectionne}' supprimé de la roue.")
+                st.rerun()
+
+            else:
+                st.warning("⚠️ Sélectionne d'abord un livre.")
 else:
     st.info("🎉 Aucun livre dans la roue actuellement.")
 
@@ -148,13 +295,13 @@ if st.button("Remettre tous les livres dans la roue"):
     st.rerun()
 
 with st.expander("📖 Voir les livres encore dans la roue"):
-    if data["liste_tirage"]:
-        st.markdown("• " + "<br>• ".join(data["liste_tirage"]), unsafe_allow_html=True)
+    if livres_a_lire:
+        st.markdown("• " + "<br>• ".join(livres_a_lire_details), unsafe_allow_html=True)
     else:
         st.info("Aucun livre dans la roue.")
 
 with st.expander("✅ Voir les livres déjà tirés/retirés"):
-    if data["livres_supprimes"]:
-        st.markdown("• " + "<br>• ".join(data["livres_supprimes"]), unsafe_allow_html=True)
+    if livres_lus:
+        st.markdown("• " + "<br>• ".join(livres_lus_details), unsafe_allow_html=True)
     else:
         st.info("Aucun livre encore tiré.")

@@ -1,7 +1,7 @@
 import streamlit.components.v1 as components
 import json
 
-def roue_interactive(livres, lancer=False, height=600):
+def roue_interactive(livres, lancer=False, spin_id=0, height=600):
     html_code = f"""
     <!DOCTYPE html>
     <html lang="fr">
@@ -15,6 +15,7 @@ def roue_interactive(livres, lancer=False, height=600):
       <script>
         let roue;
         const livres = {json.dumps(livres)};
+        const spinId = {json.dumps(spin_id)};
         
         if (livres && livres.length > 0) {{
           const couleurs = ['#e74c3c', '#f1c40f', '#2ecc71', '#3498db', '#9b59b6', '#e67e22'];
